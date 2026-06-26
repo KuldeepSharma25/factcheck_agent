@@ -3,9 +3,12 @@ Core logic for the Fact-Check Agent.
 
 Pipeline:
 1. extract_text_from_pdf  -> pulls raw text out of an uploaded PDF
-2. extract_claims         -> asks Claude to identify discrete, checkable factual claims
-3. verify_claim           -> asks Claude (with web search enabled) to check one claim
-                             against live web data and return a verdict
+2. extract_claims         -> asks Gemini to identify discrete, checkable factual claims
+3. verify_claim           -> asks Gemini (with Google Search grounding enabled) to
+                             check one claim against live web data and return a verdict
+
+Uses Google's Gemini API (free tier available) with built-in Google Search
+grounding, so no separate search API key is needed.
 """
 
 import json
@@ -13,9 +16,10 @@ import re
 from typing import List, Dict, Any
 
 import pdfplumber
-from anthropic import Anthropic
+from google import genai
+from google.genai import types
 
-MODEL_NAME = "claude-sonnet-4-6"
+MODEL_NAME = "gemini-3-flash-preview"
 
 
 # ---------------------------------------------------------------------------
@@ -59,26 +63,21 @@ Rules:
 """
 
 
-def extract_claims(client: Anthropic, document_text: str) -> List[Dict[str, Any]]:
-    """Use Claude to pull structured, checkable claims out of document text."""
+def extract_claims(client: "genai.Client", document_text: str) -> List[Dict[str, Any]]:
+    """Use Gemini to pull structured, checkable claims out of document text."""
     # Guard against extremely long documents blowing the context window.
     truncated = document_text[:60000]
 
-    response = client.messages.create(
+    response = client.models.generate_content(
         model=MODEL_NAME,
-        max_tokens=4000,
-        system=EXTRACTION_SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": f"Document text:\n\n{truncated}\n\nReturn the JSON array of claims now.",
-            }
-        ],
+        contents=f"Document text:\n\n{truncated}\n\nReturn the JSON array of claims now.",
+        config=types.GenerateContentConfig(
+            system_instruction=EXTRACTION_SYSTEM_PROMPT,
+            temperature=0.2,
+        ),
     )
 
-    raw_text = "".join(
-        block.text for block in response.content if block.type == "text"
-    )
+    raw_text = response.text or ""
     return _safe_parse_json_array(raw_text)
 
 
@@ -101,7 +100,7 @@ def _safe_parse_json_array(raw_text: str) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# 3. CLAIM VERIFICATION (live web search via Claude's web_search tool)
+# 3. CLAIM VERIFICATION (live web search via Gemini's Google Search grounding)
 # ---------------------------------------------------------------------------
 VERIFICATION_SYSTEM_PROMPT = """You are a rigorous fact-checker with live web
 search access. You will be given ONE factual claim extracted from a marketing
@@ -125,37 +124,59 @@ Verdict definitions:
   contradicts what reliable sources say, or the claim appears fabricated.
 
 Always cite at least one source when verdict is Verified or Inaccurate.
+IMPORTANT: Output ONLY the JSON object as your final answer text, with no
+other prose before or after it.
 """
 
 
-def verify_claim(client: Anthropic, claim: str) -> Dict[str, Any]:
-    """Verify a single claim using Claude with the web_search tool enabled."""
-    response = client.messages.create(
+def verify_claim(client: "genai.Client", claim: str) -> Dict[str, Any]:
+    """Verify a single claim using Gemini with Google Search grounding enabled."""
+    response = client.models.generate_content(
         model=MODEL_NAME,
-        max_tokens=2000,
-        system=VERIFICATION_SYSTEM_PROMPT,
-        tools=[{"type": "web_search_20250305", "name": "web_search"}],
-        messages=[
-            {
-                "role": "user",
-                "content": f'Claim to verify: "{claim}"\n\nSearch the web, then respond with the JSON verdict object only.',
-            }
-        ],
+        contents=f'Claim to verify: "{claim}"\n\nSearch the web, then respond with the JSON verdict object only.',
+        config=types.GenerateContentConfig(
+            system_instruction=VERIFICATION_SYSTEM_PROMPT,
+            tools=[types.Tool(google_search=types.GoogleSearch())],
+            temperature=0.2,
+        ),
     )
 
-    raw_text = "".join(
-        block.text for block in response.content if block.type == "text"
-    )
+    raw_text = response.text or ""
     parsed = _safe_parse_json_object(raw_text)
+
+    # Pull grounding source URLs as a fallback / supplement to model-reported sources
+    grounding_sources = _extract_grounding_sources(response)
+    if grounding_sources and not parsed.get("sources"):
+        parsed["sources"] = grounding_sources
 
     if not parsed:
         parsed = {
             "verdict": "False",
             "correct_fact": "Could not determine — model did not return a parsable verdict.",
             "explanation": "The verification step failed to produce structured output.",
-            "sources": [],
+            "sources": grounding_sources,
         }
     return parsed
+
+
+def _extract_grounding_sources(response) -> List[str]:
+    """Pull source URLs/titles out of Gemini's grounding metadata, if present."""
+    sources = []
+    try:
+        candidates = response.candidates or []
+        for candidate in candidates:
+            grounding = getattr(candidate, "grounding_metadata", None)
+            if not grounding:
+                continue
+            chunks = getattr(grounding, "grounding_chunks", None) or []
+            for chunk in chunks:
+                web = getattr(chunk, "web", None)
+                if web and getattr(web, "uri", None):
+                    title = getattr(web, "title", None) or web.uri
+                    sources.append(title)
+    except Exception:
+        pass
+    return sources
 
 
 def _safe_parse_json_object(raw_text: str) -> Dict[str, Any]:

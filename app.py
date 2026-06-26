@@ -3,7 +3,7 @@ import time
 
 import pandas as pd
 import streamlit as st
-from anthropic import Anthropic
+from google import genai
 
 from factcheck_core import extract_claims, extract_text_from_pdf, verify_claim
 
@@ -22,10 +22,10 @@ VERDICT_ICONS = {
 
 
 def get_api_key() -> str:
-    """Pull the Anthropic API key from Streamlit secrets, env var, or user input."""
-    if "ANTHROPIC_API_KEY" in st.secrets:
-        return st.secrets["ANTHROPIC_API_KEY"]
-    env_key = os.environ.get("ANTHROPIC_API_KEY")
+    """Pull the Gemini API key from Streamlit secrets, env var, or user input."""
+    if "GEMINI_API_KEY" in st.secrets:
+        return st.secrets["GEMINI_API_KEY"]
+    env_key = os.environ.get("GEMINI_API_KEY")
     if env_key:
         return env_key
     return st.session_state.get("manual_api_key", "")
@@ -44,8 +44,8 @@ def render_sidebar_key_input():
     if api_key:
         return api_key
 
-    st.warning("No Anthropic API key found in secrets. Enter one below to run this app.")
-    manual_key = st.text_input("Anthropic API key", type="password", key="manual_api_key_input")
+    st.warning("No Gemini API key found in secrets. Enter one below to run this app.")
+    manual_key = st.text_input("Gemini API key", type="password", key="manual_api_key_input")
     if manual_key:
         st.session_state["manual_api_key"] = manual_key
         return manual_key
@@ -67,7 +67,7 @@ def main():
     run_clicked = st.button("Run Fact-Check", type="primary", disabled=not (uploaded_file and api_key))
 
     if not api_key:
-        st.info("Add your Anthropic API key above to get started.")
+        st.info("Add your Gemini API key above to get started.")
         return
 
     if not uploaded_file:
@@ -77,7 +77,7 @@ def main():
     if not run_clicked:
         return
 
-    client = Anthropic(api_key=api_key)
+    client = genai.Client(api_key=api_key)
 
     # Step 1: extract text
     with st.spinner("Reading PDF..."):

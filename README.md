@@ -11,11 +11,11 @@ figures), checks each one against **live web data**, and flags it as:
 ## How it works
 
 1. **Extract** — `pdfplumber` pulls raw text out of the uploaded PDF.
-2. **Identify claims** — Claude (Anthropic API) reads the text and returns a
+2. **Identify claims** — Google's Gemini API reads the text and returns a
    structured JSON list of specific, checkable claims (skipping vague
    marketing language with nothing to verify).
-3. **Verify** — for each claim, Claude is called again with the built-in
-   `web_search` tool enabled, so it can check the claim against current
+3. **Verify** — for each claim, Gemini is called again with **Google Search
+   grounding** enabled, so it can check the claim against current
    information on the live web rather than relying on its training data.
 4. **Report** — each claim gets a verdict, the correct/current fact, a short
    explanation, and source links. Results are shown inline and can be
@@ -25,8 +25,8 @@ figures), checks each one against **live web data**, and flags it as:
 
 - **Frontend:** Streamlit
 - **PDF parsing:** pdfplumber
-- **Claim extraction & verification:** Anthropic Claude API (`claude-sonnet-4-6`)
-  with the native `web_search` tool
+- **Claim extraction & verification:** Google Gemini API (`gemini-3-flash-preview`)
+  with built-in Google Search grounding
 - **Deployment:** Streamlit Community Cloud
 
 ## Running locally
@@ -40,7 +40,7 @@ pip install -r requirements.txt
 Create a `.streamlit/secrets.toml` file with your API key:
 
 ```toml
-ANTHROPIC_API_KEY = "sk-ant-..."
+GEMINI_API_KEY = "AIza..."
 ```
 
 Then run:
@@ -61,7 +61,7 @@ Deployed on **Streamlit Community Cloud**. To redeploy your own copy:
    account, and select this repo + `app.py` as the entry point.
 3. In the app's **Settings → Secrets**, add:
    ```toml
-   ANTHROPIC_API_KEY = "sk-ant-..."
+   GEMINI_API_KEY = "AIza..."
    ```
 4. Deploy. You'll get a public URL like `https://your-app-name.streamlit.app`.
 
